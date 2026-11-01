@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light Box</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#000; --panel:#18181d; --line:#2c2c35; --text:#e8e6e1; --dim:#8c8a85; --accent:#ffb347; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 "IBM Plex Sans",system-ui,sans-serif; }
+  button, input, select, textarea { font-family:inherit; }
+  h1 { margin:0; font-size:26px; font-weight:600; letter-spacing:-.01em; }
+  .app { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; grid-template-columns:1fr; }
+
+  /* Stage: all layers share the same box, so they line up */
+  .stage { position:relative; width:100%; aspect-ratio:2/1; background:#000; overflow:hidden; border-radius:6px; }
+  .stage img { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; }
+  .layer { opacity:0; transition:opacity .25s; }
+
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; display:grid; gap:18px 28px; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); align-content:start; }
+  h2 { margin:0 0 8px; font-size:15px; font-weight:600; }
+  h3 { margin:14px 0 0; font-size:13px; font-weight:600; }
+  label { display:block; font-size:13px; color:var(--dim); margin:8px 0 2px; }
+  input[type=range] { width:100%; height:14px; border-radius:7px; appearance:none; -webkit-appearance:none; outline-offset:3px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:22px; border-radius:4px; background:#fff; border:2px solid #222; }
+  input[type=range]::-moz-range-thumb { width:14px; height:18px; border-radius:4px; background:#fff; border:2px solid #222; }
+  .bright { background:linear-gradient(90deg,#000,#fff); }
+  .tint { background:linear-gradient(90deg,#fff,#d00); }
+  .hue { background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+
+  .choices { display:flex; flex-wrap:wrap; gap:6px; }
+  .choices button { background:#23232a; color:var(--text); border:1px solid var(--line); border-radius:5px; padding:6px 12px; font:inherit; cursor:pointer; }
+  .choices button[aria-pressed=true] { background:var(--accent); color:#1a1205; border-color:var(--accent); }
+  .choices button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  /* Stage looks */
+  .choices button:disabled { opacity:.4; cursor:default; }
+  #looks-status { min-height:1.4em; margin:8px 0 0; color:var(--dim); font-size:13px; }
+  #looks-list { list-style:none; margin:12px 0 0; padding:0; display:grid; gap:10px; }
+  #looks-list li { display:flex; align-items:center; gap:12px; }
+  #looks-list img { width:110px; aspect-ratio:2/1; border-radius:4px; background:#000; flex:none; }
+  #looks-list input[type=text] { flex:1; min-width:0; background:#23232a; color:var(--text); border:1px solid var(--line); border-radius:5px; padding:6px 10px; font:inherit; }
+  #looks-list button { background:#23232a; color:var(--text); border:1px solid var(--line); border-radius:5px; padding:6px 12px; font:inherit; cursor:pointer; }
+
+  [hidden] { display:none !important; }
+  /* Tabs */
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+  .tabs button { background:none; color:var(--dim); border:0; border-bottom:2px solid transparent; padding:8px 16px; font:inherit; cursor:pointer; margin-bottom:-1px; }
+  .tabs button[aria-selected=true] { color:var(--text); border-bottom-color:var(--accent); }
+  .tabs button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  /* Presets */
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+<!-- Recolors a white gobo while keeping its shape (alpha) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="gobo-cyan"    color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/></filter>
+  <filter id="gobo-magenta" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 0  0 0 0 0 1  0 0 0 1 0"/></filter>
+  <filter id="gobo-yellow"  color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 0  0 0 0 1 0"/></filter>
+</svg>
+<div class="app">
+
+  <h1>Light Box</h1>
+
+  <div class="tabs" role="tablist" aria-label="Mode">
+    <button type="button" role="tab" id="tab-lighting" aria-selected="true">Lighting</button>
+    <button type="button" role="tab" id="tab-ebm" aria-selected="false">EBM</button>
+  </div>
+
+
+  <div class="stage" id="stage">
+    <!-- Bottom to top. All images must be the same pixel size. -->
+    <img src="images/base.webp" alt="Stage with lights off">
+    <img class="layer" id="parcans"       src="images/parcans.webp"        alt="">
+    <img class="layer" id="parcans-odd"   src="images/parcans-odds.webp"   alt="">
+    <img class="layer" id="parcans-even"  src="images/parcans-evens.webp"  alt="">
+    <img class="layer" id="fresnels"      src="images/fresnels.webp"       alt="">
+    <img class="layer" id="fresnels-side"  src="images/fresnels-sides.webp" alt="">
+    <img class="layer" id="fresnels-front" src="images/fresnels-front.webp" alt="">
+    <img class="layer" id="spot-warm"     src="images/spotlight-warm.webp" alt="">
+    <img class="layer" id="spot-cool"     src="images/spotlight-cool.webp" alt="">
+    <img class="layer" id="gobo-1"        src="images/gobo-1.webp"         alt="">
+    <img class="layer" id="gobo-2"        src="images/gobo-2.webp"         alt="">
+    <img class="layer" id="gobo-3"        src="images/gobo-3.webp"         alt="">
+    <img class="layer" id="gobo-4"        src="images/gobo-4.webp"         alt="">
+    <img class="layer" id="gobo-5"        src="images/gobo-5.webp"         alt="">
+    <img class="layer" id="gobo-6"        src="images/gobo-6.webp"         alt="">
+  </div>
+
+  <div class="panel" id="lighting-presets" style="grid-template-columns:1fr">
+    <section>
+      <h2>Presets</h2>
+      <div class="choices" id="preset-list"></div>
+    </section>
+  </div>
+
+  <!-- EBM tab: one-click colors for each type of light (replaces the sliders and the Lighting presets) -->
+  <div class="panel" id="ebm-panel" hidden>
+    <section>
+      <h2>Parcans</h2>
+      <div class="choices" id="ebm-parcans" role="group" aria-label="Parcan colors"></div>
+      <label for="ebm-parcans-b">Brightness</label>
+      <input type="range" class="bright" id="ebm-parcans-b" min="0" max="100" value="100">
+    </section>
+    <section>
+      <h2>Fresnels</h2>
+      <div class="choices" id="ebm-fresnels" role="group" aria-label="Fresnel colors"></div>
+      <label for="ebm-fresnels-b">Brightness</label>
+      <input type="range" class="bright" id="ebm-fresnels-b" min="0" max="100" value="100">
+    </section>
+  </div>
+
+  <div class="panel">
+    <section id="sec-parcans">
+      <h2>Parcans</h2>
+      <div class="choices" id="parcan-mode" role="group" aria-label="Parcan control mode"></div>
+
+      <!-- Default: all parcans together (uses parcans.png) -->
+      <div id="parcans-all">
+        <label for="parcans-b">Brightness</label>
+        <input type="range" class="bright" id="parcans-b" min="0" max="100" value="50">
+        <label for="parcans-h">Color</label>
+        <input type="range" class="hue" id="parcans-h" min="0" max="360" value="0">
+        <label for="parcans-w">Saturation</label>
+        <input type="range" class="tint" id="parcans-w" min="0" max="100" value="100">
+      </div>
+
+      <!-- Split: odds and evens controlled separately -->
+      <div id="parcans-split" hidden>
+        <h3>Odds</h3>
+        <label for="parcans-odd-b">Brightness</label>
+        <input type="range" class="bright" id="parcans-odd-b" min="0" max="100" value="50">
+        <label for="parcans-odd-h">Color</label>
+        <input type="range" class="hue" id="parcans-odd-h" min="0" max="360" value="0">
+        <label for="parcans-odd-w">Saturation</label>
+        <input type="range" class="tint" id="parcans-odd-w" min="0" max="100" value="100">
+
+        <h3>Evens</h3>
+        <label for="parcans-even-b">Brightness</label>
+        <input type="range" class="bright" id="parcans-even-b" min="0" max="100" value="50">
+        <label for="parcans-even-h">Color</label>
+        <input type="range" class="hue" id="parcans-even-h" min="0" max="360" value="0">
+        <label for="parcans-even-w">Saturation</label>
+        <input type="range" class="tint" id="parcans-even-w" min="0" max="100" value="100">
+      </div>
+    </section>
+
+    <section id="sec-fresnels">
+      <h2>Fresnels</h2>
+      <div class="choices" id="fresnel-mode" role="group" aria-label="Fresnel control mode"></div>
+
+      <!-- Default: all fresnels together (uses fresnels.png) -->
+      <div id="fresnels-all">
+        <label for="fresnels-b">Brightness</label>
+        <input type="range" class="bright" id="fresnels-b" min="0" max="100" value="50">
+        <label for="fresnels-h">Color</label>
+        <input type="range" class="hue" id="fresnels-h" min="0" max="360" value="0">
+        <label for="fresnels-w">Saturation</label>
+        <input type="range" class="tint" id="fresnels-w" min="0" max="100" value="100">
+      </div>
+
+      <!-- Split: sides and front controlled separately -->
+      <div id="fresnels-split" hidden>
+        <h3>Sides</h3>
+        <label for="fresnels-side-b">Brightness</label>
+        <input type="range" class="bright" id="fresnels-side-b" min="0" max="100" value="50">
+        <label for="fresnels-side-h">Color</label>
+        <input type="range" class="hue" id="fresnels-side-h" min="0" max="360" value="0">
+        <label for="fresnels-side-w">Saturation</label>
+        <input type="range" class="tint" id="fresnels-side-w" min="0" max="100" value="100">
+
+        <h3>Front</h3>
+        <label for="fresnels-front-b">Brightness</label>
+        <input type="range" class="bright" id="fresnels-front-b" min="0" max="100" value="50">
+        <label for="fresnels-front-h">Color</label>
+        <input type="range" class="hue" id="fresnels-front-h" min="0" max="360" value="0">
+        <label for="fresnels-front-w">Saturation</label>
+        <input type="range" class="tint" id="fresnels-front-w" min="0" max="100" value="100">
+      </div>
+    </section>
+
+    <section>
+      <h2>Spotlight</h2>
+      <div class="choices" id="spot-choices" role="group" aria-label="Spotlight"></div>
+    </section>
+
+    <section>
+      <h2>Gobo</h2>
+      <div class="choices" id="gobo-choices" role="group" aria-label="Gobo"></div>
+      <label>Gobo color</label>
+      <div class="choices" id="gobo-tint" role="group" aria-label="Gobo color"></div>
+    </section>
+  </div>
+
+  <div class="panel" style="grid-template-columns:1fr">
+    <section>
+      <h2>Stage looks</h2>
+      <div class="choices">
+        <button type="button" id="save-look">Save current look</button>
+        <button type="button" id="export-pdf" disabled>Export PDF</button>
+        <button type="button" id="clear-looks" disabled>Clear all</button>
+      </div>
+      <p id="looks-status" role="status"></p>
+      <ul id="looks-list"></ul>
+    </section>
+  </div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  // Hue + brightness + saturation lights.
+  // Brightness -> opacity, color -> hue-rotate, saturation -> saturate (drained color is lifted to white).
+  // The source PNG must be pure red (hue 0) so the slider value equals the final hue.
+  // Returns setActive(false) to hide the layer (used when switching parcan modes).
+  function wireLight(name) {
+    const img = $(name), b = $(name + '-b'), h = $(name + '-h'), w = $(name + '-w');
+    let active = true;
+    const update = () => {
+      // Saturation track always shows white -> the currently chosen hue
+      w.style.background = `linear-gradient(90deg,#fff,hsl(${h.value},100%,50%))`;
+      if (!active) { img.style.opacity = 0; return; }
+      img.style.opacity = b.value / 100;
+      const t = 1 - w.value / 100;   // slider 100 = full color, 0 = white
+      // hue-rotate keeps luminance constant, so one brightness lift turns the drained grey into white at any hue.
+      img.style.filter = `hue-rotate(${h.value}deg) saturate(${1 - t}) brightness(${1 + t * 3.7})`;
+    };
+    [b, h, w].forEach(el => el.addEventListener('input', update));
+    update();
+    return { b, h, w, setActive(v) { active = v; update(); } };
+  }
+
+  // One-of-many selector. Each option may name a layer to show (at opacity `on`, default 1)
+  // and/or an onSelect callback. `start` is the index active on load.
+  function wireChoice(containerId, options, start = 0) {
+    const box = $(containerId);
+    const buttons = options.map(opt => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = opt.label;
+      btn.addEventListener('click', () => select(opt));
+      box.appendChild(btn);
+      return btn;
+    });
+    function select(chosen) {
+      options.forEach((opt, i) => {
+        if (opt.layer) $(opt.layer).style.opacity = opt === chosen ? (opt.on ?? 1) : 0;
+        buttons[i].setAttribute('aria-pressed', opt === chosen);
+      });
+      if (chosen.onSelect) chosen.onSelect();
+    }
+    select(options[start]);
+  }
+
+  // A light with an "All" mode (one image) and a "Split" mode (two images, separate controls).
+  // `prefix` is the combined layer id; `subs` are the suffixes of the two split layers.
+  function wireSplitGroup(prefix, modeId, subs) {
+    const all = wireLight(prefix);
+    const parts = subs.map(s => wireLight(prefix + '-' + s));
+    function setSplit(split) {
+      $(prefix + '-all').hidden = split;
+      $(prefix + '-split').hidden = !split;
+      if (split) {
+        // Start both split groups from the combined controls' current values
+        parts.forEach(p => { p.b.value = all.b.value; p.h.value = all.h.value; p.w.value = all.w.value; });
+      }
+      all.setActive(!split);
+      parts.forEach(p => p.setActive(split));
+    }
+    wireChoice(modeId, [
+      { label: 'All',   onSelect: () => setSplit(false) },
+      { label: 'Split', onSelect: () => setSplit(true) }
+    ]);
+  }
+  wireSplitGroup('parcans',  'parcan-mode',  ['odd', 'even']);
+  wireSplitGroup('fresnels', 'fresnel-mode', ['side', 'front']);
+
+  wireChoice('spot-choices', [
+    { label: 'Off',  layer: null },
+    { label: 'Warm', layer: 'spot-warm' },
+    { label: 'Cool', layer: 'spot-cool' }
+  ], 1); // start on Warm
+
+  const goboOptions = [{ label: 'Off', layer: null }];
+  for (let i = 1; i <= 6; i++) goboOptions.push({ label: String(i), layer: 'gobo-' + i, on: 0.5 });
+  wireChoice('gobo-choices', goboOptions);
+
+  // Gobo color: none selected = white (the images as drawn). Click a color to apply it to
+  // all six gobos; click it again to go back to white.
+  const tints = [['Cyan', 'url(#gobo-cyan)'], ['Magenta', 'url(#gobo-magenta)'], ['Yellow', 'url(#gobo-yellow)']];
+  const tintBtns = tints.map(([label], i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.addEventListener('click', () => setTint(btn.getAttribute('aria-pressed') === 'true' ? -1 : i));
+    $('gobo-tint').appendChild(btn);
+    return btn;
+  });
+  function setTint(i) {
+    for (let g = 1; g <= 6; g++) $('gobo-' + g).style.filter = i < 0 ? '' : tints[i][1];
+    tintBtns.forEach((b, j) => b.setAttribute('aria-pressed', j === i));
+  }
+  setTint(-1); // start on white
+
+
+
+  // Every preset starts from the page defaults, then applies only what it lists.
+  // To add a preset, add an object to PRESETS. Light values: b = brightness 0-100,
+  // h = color 0-360 (0 red, 240 blue), w = saturation 0-100.
+  const DEFAULTS = { b: 50, h: 0, w: 100, spot: 'Warm', gobo: 'Off' };
+  // A light is either { b, h, w } (all together) or { split: [first, second] }
+  // (parcans: odds, evens; fresnels: sides, front). Anything left out uses the defaults.
+  const PRESETS = [
+    { name: 'Total B/O', parcans: { b: 0 }, fresnels: { b: 0 }, spot: 'Off', gobo: 'Off' },
+    { name: 'Blue out', parcans: { b: 0 }, fresnels: { b: 30, h: 240 }, spot: 'Off', gobo: 'Off' },
+    { name: 'Cyan/Magenta', spot: 'Warm', gobo: '1', goboColor: 'Cyan',
+      parcans:  { split: [{ b: 100, h: 173, w: 100 }, { b: 100, h: 288, w: 100 }] },
+      fresnels: { split: [{ b: 64, h: 299, w: 100 }, { b: 100, h: 279, w: 100 }] } },
+    { name: 'Green/Blue', spot: 'Cool', gobo: '6', goboColor: 'Cyan',
+      parcans:  { split: [{ b: 100, h: 219, w: 100 }, { b: 100, h: 122, w: 70 }] },
+      fresnels: { split: [{ b: 86, h: 237, w: 100 }, { b: 100, h: 104, w: 100 }] } },
+    { name: 'Orange/Pink', spot: 'Cool', gobo: '3', goboColor: 'Magenta',
+      parcans:  { split: [{ b: 100, h: 21, w: 69 }, { b: 100, h: 318, w: 70 }] },
+      fresnels: { split: [{ b: 49, h: 8, w: 74 }, { b: 100, h: 317, w: 100 }] } },
+    { name: 'Pink/Yellow', spot: 'Cool', gobo: '5', goboColor: 'Yellow',
+      parcans:  { split: [{ b: 100, h: 327, w: 69 }, { b: 100, h: 62, w: 64 }] },
+      fresnels: { split: [{ b: 49, h: 38, w: 74 }, { b: 100, h: 58, w: 100 }] } },
+    { name: 'Green/Cyan', spot: 'Cool', gobo: '4', goboColor: 'Cyan',
+      parcans:  { split: [{ b: 100, h: 183, w: 69 }, { b: 100, h: 113, w: 64 }] },
+      fresnels: { split: [{ b: 49, h: 106, w: 74 }, { b: 100, h: 122, w: 100 }] } },
+    // Random: built fresh each click. Brightness 100, random hue per group, saturation 50-90,
+    // always split, random gobo (1-6) in a random color. Spotlight stays at the default.
+    { name: 'Random', make: () => {
+        const int = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+        const group = () => ({ b: 100, h: int(0, 360), w: int(50, 90) });
+        return { name: 'Random',
+          parcans:  { split: [group(), group()] },
+          fresnels: { split: [group(), group()] },
+          gobo: String(int(1, 6)),
+          goboColor: ['Cyan', 'Magenta', 'Yellow'][int(0, 2)] };
+      } }
+  ];
+
+  function clickButton(containerId, text) {
+    const btn = [...document.querySelectorAll('#' + containerId + ' button')].find(b => b.textContent === text);
+    if (btn) btn.click();
+  }
+  function setSliders(id, v) {
+    ['b', 'h', 'w'].forEach(k => {
+      const el = $(id + '-' + k);
+      el.value = v[k];
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+  const withDefaults = v => Object.assign({ b: DEFAULTS.b, h: DEFAULTS.h, w: DEFAULTS.w }, v || {});
+
+  const LIGHTS = {
+    parcans:  { subs: ['odd', 'even'],   mode: 'parcan-mode' },
+    fresnels: { subs: ['side', 'front'], mode: 'fresnel-mode' }
+  };
+  // Sets one type of light from a spec: { b, h, w } for all together, or { split: [first, second] }.
+  function applyLight(prefix, spec) {
+    const { subs, mode } = LIGHTS[prefix];
+    clickButton(mode, 'All');   // start from All mode with every slider at the spec's (or default) value
+    const base = spec.split ? withDefaults() : withDefaults(spec);
+    [prefix].concat(subs.map(s => prefix + '-' + s)).forEach(id => setSliders(id, base));
+    if (spec.split) {
+      clickButton(mode, 'Split');
+      spec.split.forEach((v, i) => setSliders(prefix + '-' + subs[i], withDefaults(v)));
+    }
+  }
+  function setSpotAndGobo(p) {
+    clickButton('spot-choices', p.spot || DEFAULTS.spot);
+    clickButton('gobo-choices', p.gobo || DEFAULTS.gobo);
+    // Gobo color: clear any color first, then pick this preset's (none = white)
+    const tint = document.querySelector('#gobo-tint button[aria-pressed="true"]');
+    if (tint) tint.click();
+    if (p.goboColor) clickButton('gobo-tint', p.goboColor);
+  }
+  function applyPreset(p) {
+    applyLight('parcans', p.parcans || {});
+    applyLight('fresnels', p.fresnels || {});
+    setSpotAndGobo(p);
+    clearEbmMarks();
+    lightingDirty = true;
+  }
+  PRESETS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = p.name;
+    btn.addEventListener('click', () => applyPreset(p.make ? p.make() : p));
+    $('preset-list').appendChild(btn);
+  });
+
+
+  // ---------- EBM tab ----------
+  // Slider values that render each color on screen (found by testing the page's own hue/saturation filter).
+  // A preset always runs split (first color on Odds / Sides, second on Evens / Front) at the brightness slider's value (starts at 100).
+  const C = {
+    red: { h: 0, w: 100 },      orange: { h: 27, w: 70 },     blue: { h: 235, w: 100 },
+    purple: { h: 269, w: 100 }, cyan: { h: 185, w: 68 },      magenta: { h: 300, w: 90 },
+    amber: { h: 10, w: 70 },    lightBlue: { h: 237, w: 65 }, coolWhite: { h: 239, w: 20 }
+  };
+  const EBM = {
+    parcans: [
+      { name: 'Red/Orange',  colors: [C.red, C.orange] },
+      { name: 'Blue/Purple', colors: [C.blue, C.purple] },
+      { name: 'Purple/Cyan', colors: [C.purple, C.cyan] }
+    ],
+    fresnels: [
+      { name: 'Magenta', colors: [C.magenta, C.amber] },
+      { name: 'Amber',   colors: [C.amber, C.amber] },
+      { name: 'Cool',    colors: [C.lightBlue, C.coolWhite] }
+    ]
+  };
+  let lightingDirty = false;   // true once the Lighting tab (sliders or presets) has changed the lights
+  function clearEbmMarks(prefix) {
+    (prefix ? [prefix] : Object.keys(EBM)).forEach(k =>
+      document.querySelectorAll('#ebm-' + k + ' button').forEach(b => b.setAttribute('aria-pressed', 'false')));
+  }
+  Object.keys(EBM).forEach(prefix => {
+    EBM[prefix].forEach(p => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = p.name;
+      btn.setAttribute('aria-pressed', 'false');
+      btn.addEventListener('click', () => {
+        applyLight(prefix, { split: p.colors.map(c => ({ b: +$('ebm-' + prefix + '-b').value, h: c.h, w: c.w })) });
+        clearEbmMarks(prefix);
+        btn.setAttribute('aria-pressed', 'true');
+      });
+      $('ebm-' + prefix).appendChild(btn);
+    });
+  });
+  // The brightness slider sets every group of that light (odds and evens, or sides and front) at once
+  Object.keys(LIGHTS).forEach(prefix => {
+    $('ebm-' + prefix + '-b').addEventListener('input', e => {
+      [prefix].concat(LIGHTS[prefix].subs.map(s => prefix + '-' + s)).forEach(id => {
+        const el = $(id + '-b');
+        el.value = e.target.value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+  });
+  // When the tab opens after changes on the Lighting tab, show the brightness the lights actually have
+  function syncEbmBrightness() {
+    Object.keys(LIGHTS).forEach(prefix => {
+      const split = document.querySelector('#' + LIGHTS[prefix].mode + ' button[aria-pressed="true"]');
+      const id = split && split.textContent === 'Split' ? prefix + '-' + LIGHTS[prefix].subs[0] : prefix;
+      $('ebm-' + prefix + '-b').value = $(id + '-b').value;
+    });
+  }
+  // Changing a light by hand (a real click or drag, not a preset) means the highlighted color no longer applies
+  document.addEventListener('input', e => {
+    if (!e.isTrusted) return;
+    Object.keys(EBM).forEach(k => { if (e.target.id && e.target.id.indexOf(k) === 0) { clearEbmMarks(k); lightingDirty = true; } });
+  });
+  Object.keys(LIGHTS).forEach(k => $(LIGHTS[k].mode).addEventListener('click', e => { if (e.isTrusted) { clearEbmMarks(k); lightingDirty = true; } }));
+
+  // ---------- Tabs ----------
+  // EBM replaces the parcan/fresnel sliders and the Lighting presets; spotlight, gobo and stage looks are shared.
+  function showTab(name) {
+    const ebm = name === 'ebm';
+    ['lighting-presets', 'sec-parcans', 'sec-fresnels'].forEach(id => { $(id).hidden = ebm; });
+    $('ebm-panel').hidden = !ebm;
+    if (ebm && lightingDirty) { syncEbmBrightness(); lightingDirty = false; }
+    $('tab-lighting').setAttribute('aria-selected', !ebm);
+    $('tab-ebm').setAttribute('aria-selected', ebm);
+  }
+  $('tab-lighting').addEventListener('click', () => showTab('lighting'));
+  $('tab-ebm').addEventListener('click', () => showTab('ebm'));
+
+  // ---------- Stage looks: save up to 5 looks and export them to a PDF ----------
+  const MAX_LOOKS = 50;
+  const looks = [];
+  let lookCounter = 0;
+  const say = msg => { $('looks-status').textContent = msg; };
+
+  // Read the current settings straight from the controls.
+  const pressed = id => { const b = document.querySelector('#' + id + ' button[aria-pressed="true"]'); return b ? b.textContent : null; };
+  const lightVals = name => ({ b: +$(name + '-b').value, h: +$(name + '-h').value, w: +$(name + '-w').value });
+  function readState() {
+    const group = (prefix, subs, modeId) => ({
+      split: pressed(modeId) === 'Split',
+      all: lightVals(prefix),
+      parts: subs.map(sub => lightVals(prefix + '-' + sub))
+    });
+    return {
+      parcans:  group('parcans',  ['odd', 'even'],   'parcan-mode'),
+      fresnels: group('fresnels', ['side', 'front'], 'fresnel-mode'),
+      spot: pressed('spot-choices') || 'Off',
+      gobo: pressed('gobo-choices') || 'Off',
+      goboColor: pressed('gobo-tint') || 'White'
+    };
+  }
+
+  // Redraw the stage on a canvas. The CSS filters used on the page are reproduced pixel by pixel
+  // so the picture is identical in every browser.
+  const SNAP_W = 1100, SNAP_H = 550;
+  const TINTS = { 'gobo-cyan': [0, 255, 255], 'gobo-magenta': [255, 0, 255], 'gobo-yellow': [255, 255, 0] };
+  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  function applyFilter(data, filter) {
+    const tint = /url\(\s*["']?#(gobo-\w+)["']?\s*\)/.exec(filter);
+    if (tint && TINTS[tint[1]]) {
+      const c = TINTS[tint[1]];
+      for (let i = 0; i < data.length; i += 4) { data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; }
+      return;
+    }
+    const m = /hue-rotate\(([-+\d.eE]+)deg\)\s*saturate\(([-+\d.eE]+)\)\s*brightness\(([-+\d.eE]+)\)/.exec(filter);
+    if (!m) return;
+    const a = m[1] * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a), s = +m[2], br = +m[3];
+    const hr = [0.213 + cs * 0.787 - sn * 0.213, 0.715 - cs * 0.715 - sn * 0.715, 0.072 - cs * 0.072 + sn * 0.928,
+                0.213 - cs * 0.213 + sn * 0.143, 0.715 + cs * 0.285 + sn * 0.140, 0.072 - cs * 0.072 - sn * 0.283,
+                0.213 - cs * 0.213 - sn * 0.787, 0.715 - cs * 0.715 + sn * 0.715, 0.072 + cs * 0.928 + sn * 0.072];
+    const sa = [0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s,
+                0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s,
+                0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s];
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const r1 = clamp(hr[0] * r + hr[1] * g + hr[2] * b), g1 = clamp(hr[3] * r + hr[4] * g + hr[5] * b), b1 = clamp(hr[6] * r + hr[7] * g + hr[8] * b);
+      const r2 = clamp(sa[0] * r1 + sa[1] * g1 + sa[2] * b1), g2 = clamp(sa[3] * r1 + sa[4] * g1 + sa[5] * b1), b2 = clamp(sa[6] * r1 + sa[7] * g1 + sa[8] * b1);
+      data[i] = clamp(r2 * br); data[i + 1] = clamp(g2 * br); data[i + 2] = clamp(b2 * br);
+    }
+  }
+  function snapshot() {
+    const cv = document.createElement('canvas'); cv.width = SNAP_W; cv.height = SNAP_H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, SNAP_W, SNAP_H);
+    const stage = $('stage');
+    ctx.drawImage(stage.querySelector('img:not(.layer)'), 0, 0, SNAP_W, SNAP_H);
+    const tmp = document.createElement('canvas'); tmp.width = SNAP_W; tmp.height = SNAP_H;
+    const tctx = tmp.getContext('2d', { willReadFrequently: true });
+    stage.querySelectorAll('img.layer').forEach(img => {
+      const op = parseFloat(img.style.opacity) || 0;
+      if (op <= 0) return;
+      tctx.clearRect(0, 0, SNAP_W, SNAP_H);
+      tctx.drawImage(img, 0, 0, SNAP_W, SNAP_H);
+      if (img.style.filter) {
+        const d = tctx.getImageData(0, 0, SNAP_W, SNAP_H);
+        applyFilter(d.data, img.style.filter);
+        tctx.putImageData(d, 0, 0);
+      }
+      ctx.globalAlpha = op; ctx.drawImage(tmp, 0, 0); ctx.globalAlpha = 1;
+    });
+    return cv.toDataURL('image/jpeg', 0.9);
+  }
+
+  // Describing colors in words and swatches
+  const HUE_NAMES = ['Red', 'Orange', 'Yellow', 'Lime', 'Green', 'Spring green', 'Cyan', 'Azure', 'Blue', 'Violet', 'Magenta', 'Rose'];
+  const hueName = h => HUE_NAMES[Math.round(((h % 360) + 360) % 360 / 30) % 12];
+  // The swatch is the light's red source color run through the same filter the page applies,
+  // so it matches what is on screen (at full brightness).
+  function swatchRgb(h, w) {
+    const t = 1 - w / 100;
+    const px = new Uint8ClampedArray([253, 0, 0, 255]);
+    applyFilter(px, 'hue-rotate(' + h + 'deg) saturate(' + (1 - t) + ') brightness(' + (1 + t * 3.7) + ')');
+    return [px[0], px[1], px[2]];
+  }
+
+  // Draws a simple table. cols: [{w, align?}], rows: arrays of strings or {swatch:[r,g,b]}.
+  function drawTable(doc, x, y, cols, header, rows, rowH) {
+    const totalW = cols.reduce((n, c) => n + c.w, 0);
+    doc.setLineWidth(0.2);
+    // header
+    doc.setFillColor(38, 38, 46); doc.setDrawColor(38, 38, 46);
+    doc.rect(x, y, totalW, rowH, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(255);
+    let cx = x;
+    header.forEach((h, i) => { doc.text(h, cx + 3, y + rowH / 2, { baseline: 'middle' }); cx += cols[i].w; });
+    y += rowH;
+    // body
+    rows.forEach((row, r) => {
+      doc.setFillColor(r % 2 ? 255 : 244, r % 2 ? 255 : 244, r % 2 ? 255 : 247);
+      doc.setDrawColor(205);
+      doc.rect(x, y, totalW, rowH, 'FD');
+      cx = x;
+      row.forEach((cell, i) => {
+        if (cell && cell.swatch) {
+          doc.setFillColor(cell.swatch[0], cell.swatch[1], cell.swatch[2]);
+          doc.setDrawColor(120);
+          doc.rect(cx + 3, y + 1.8, Math.min(cols[i].w - 6, 28), rowH - 3.6, 'FD');
+          doc.setDrawColor(205);
+        } else {
+          doc.setFont('helvetica', i === 0 ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(30);
+          doc.text(String(cell), cx + 3, y + rowH / 2, { baseline: 'middle' });
+        }
+        cx += cols[i].w;
+      });
+      y += rowH;
+    });
+    return y;
+  }
+
+  function drawLookPage(doc, lk, n, total) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(20);
+    doc.text(lk.name || ('Look ' + n), 15, 17);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120);
+    doc.text('Look ' + n + ' of ' + total, 282, 17, { align: 'right' });
+    doc.addImage(lk.img, 'JPEG', 15, 24, 180, 90);
+
+    const st = lk.state;
+    // Spotlight and gobo, beside the picture
+    const gOff = st.gobo === 'Off';
+    drawTable(doc, 203, 24, [{ w: 34 }, { w: 45 }], ['Setting', 'Value'], [
+      ['Spotlight', st.spot],
+      ['Gobo', gOff ? 'Off' : st.gobo],
+      ['Gobo color', gOff ? '-' : st.goboColor],
+      ['Gobo intensity', gOff ? '-' : '50%']
+    ], 9);
+
+    // Parcans and fresnels, below the picture
+    const lightRows = (label, g, names) => (g.split ? g.parts : [g.all]).map((v, i) => [
+      label, g.split ? names[i] : 'All',
+      hueName(v.h) + ' (' + v.h + '\u00B0)',
+      v.w + '%', v.b + '%',
+      { swatch: swatchRgb(v.h, v.w) }
+    ]);
+    const rows = lightRows('Parcans', st.parcans, ['Odds', 'Evens']).concat(lightRows('Fresnels', st.fresnels, ['Sides', 'Front']));
+    drawTable(doc, 15, 122, [{ w: 40 }, { w: 35 }, { w: 70 }, { w: 40 }, { w: 40 }, { w: 42 }],
+      ['Light', 'Group', 'Color', 'Saturation', 'Brightness', 'Swatch'], rows, 9.5);
+  }
+
+  async function deliver(blob, filename) {
+    try {   // inside claude.ai the page asks the viewer to confirm the save
+      const dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null;
+      if (dl) { await dl.save({ filename, data: blob }); say('PDF saved.'); return; }
+    } catch (e) {
+      if (e && e.code === 'declined') { say('Download cancelled.'); return; }
+    }
+    const url = URL.createObjectURL(blob);   // normal browser download
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    say('PDF exported.');
+  }
+
+  async function exportPdf() {
+    if (!looks.length) { say('Save a look first.'); return; }
+    if (!window.jspdf) { say('The PDF library did not load. Check your internet connection and reload.'); return; }
+    const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    looks.forEach((lk, i) => { if (i) doc.addPage(); drawLookPage(doc, lk, i + 1, looks.length); });
+    await deliver(doc.output('blob'), 'stage-looks.pdf');
+  }
+
+  function renderLooks() {
+    const ul = $('looks-list');
+    ul.textContent = '';
+    looks.forEach((lk, i) => {
+      const li = document.createElement('li');
+      const img = new Image(); img.src = lk.img; img.alt = '';
+      const name = document.createElement('input');
+      name.type = 'text'; name.value = lk.name; name.setAttribute('aria-label', 'Look name');
+      name.addEventListener('input', () => { lk.name = name.value; });
+      const del = document.createElement('button');
+      del.type = 'button'; del.textContent = 'Delete';
+      del.addEventListener('click', () => { looks.splice(i, 1); renderLooks(); say(''); });
+      li.append(img, name, del);
+      ul.appendChild(li);
+    });
+    $('save-look').disabled = looks.length >= MAX_LOOKS;
+    $('export-pdf').disabled = looks.length === 0;
+    $('clear-looks').disabled = looks.length === 0;
+  }
+
+  $('save-look').addEventListener('click', () => {
+    if (looks.length >= MAX_LOOKS) return;
+    try {
+      looks.push({ name: 'Look ' + (++lookCounter), state: readState(), img: snapshot() });
+      say(looks.length === MAX_LOOKS ? 'Saved. That is the maximum of ' + MAX_LOOKS + ' looks.' : 'Look saved.');
+    } catch (e) {
+      say('Could not capture the stage. Open this page from a web server rather than as a local file.');
+    }
+    renderLooks();
+  });
+  $('export-pdf').addEventListener('click', exportPdf);
+  $('clear-looks').addEventListener('click', () => { looks.length = 0; renderLooks(); say(''); });
+  renderLooks();
+</script>
+</body>
+</html>
