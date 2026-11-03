@@ -624,6 +624,21 @@
       ['Light', 'Group', 'Color', 'Saturation', 'Brightness', 'Swatch'], rows, 9.5);
   }
 
+  async function deliver(blob, filename) {
+    try {   // inside claude.ai the page asks the viewer to confirm the save
+      const dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null;
+      if (dl) { await dl.save({ filename, data: blob }); say('PDF saved.'); return; }
+    } catch (e) {
+      if (e && e.code === 'declined') { say('Download cancelled.'); return; }
+    }
+    const url = URL.createObjectURL(blob);   // normal browser download
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    say('PDF exported.');
+  }
+  
   async function exportPdf() {
     if (!looks.length) { say('Save a look first.'); return; }
     if (!window.jspdf) { say('The PDF library did not load. Check your internet connection and reload.'); return; }
@@ -631,7 +646,7 @@
     looks.forEach((lk, i) => { if (i) doc.addPage(); drawLookPage(doc, lk, i + 1, looks.length); });
     await deliver(doc.output('blob'), 'stage-looks.pdf');
   }
-
+  
   function renderLooks() {
     const ul = $('looks-list');
     ul.textContent = '';
